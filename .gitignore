@@ -27,7 +27,7 @@ npm-debug.log*
 data/
 
 # build artifacts (only at root — icon/icon.ico is source, do keep it)
+# ATracker.exe is committed intentionally as a prebuilt launcher.
 /icon.ico
 /AnimeTracker.exe
-/ATracker.exe
 /_pkg_warmup.exe
