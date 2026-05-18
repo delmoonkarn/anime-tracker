@@ -83,4 +83,4 @@ All writes are debounced 300 ms on the client side, sent as PUT/POST to `/api/st
 
 ## Credits
 
-Anime metadata, season listings, and tag taxonomy are sourced from **[AniList](https://anilist.co/)** via their free public [GraphQL API](https://anilist.gitbook.io/anilist-apiv2-docs/) — no API key required.
+Anime metadata, season listings, and tag taxonomy are sourced from **[AniList](https://anilist.co/)** via their free public [GraphQL API](https://anilist.gitbook.io/anilist-apiv2-docs/).
