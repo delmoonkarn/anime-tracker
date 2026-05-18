@@ -9,7 +9,7 @@ Personal anime tracker — schedule your watch list by season, discover what's a
 | Framework    | Next.js 14 (App Router), React 18, TypeScript           |
 | Styling      | Tailwind CSS                                            |
 | Icons        | Lucide React                                            |
-| Persistence  | SQLite via `better-sqlite3` — `data/anime-tracker.db`   |
+| Storage      | SQLite via `better-sqlite3` — `data/anime-tracker.db`   |
 | Spreadsheets | ExcelJS (`.xlsx` import / export)                       |
 | External API | [AniList](https://anilist.co/) GraphQL (no key required) |
 
@@ -27,13 +27,14 @@ npm run dev
 
 Or double-click **`run.bat`**.
 
+> **Requires** Node.js 18+ on PATH. Without it both `ATracker.exe` and `npm install` will fail. Download: <https://nodejs.org/>
 
 ## Features
 
 - **Schedule** — group anime by day of week, set broadcast time + platform link, today's day is highlighted, aired entries strike through
 - **Discover by Season** — pick any Winter/Spring/Summer/Fall + year, browse top anime, filter by tags, search within results, LRU-cache of last 4 selections
 - **Collection** — Favorites + Interested sections, sort by released date / added date / title / score, tag filter
-- **Import/Export `.xlsx`** — schedule and collection each have their own format with `=IMAGE()` formulas and Thai day colors
+- **Import/Export `.xlsx`** — schedule and collection each have their own format with `=IMAGE()` formulas and day colors
 
 
 ## Project layout
@@ -43,7 +44,7 @@ app/
   api/storage/[key]/route.ts   # GET/PUT/POST → reads/writes the SQLite DB
   layout.tsx                   # wraps the app in <ConfirmProvider>
   page.tsx                     # owns state, handlers, view routing
-  globals.css                  # tailwind + cyber-themed body/scrollbar/gradients
+  globals.css                  # tailwind base + scrollbar + body gradients
 components/
   SeasonSelector.tsx           # header: title, season split-button, Collection, Discover split
   ScheduleGrid.tsx             # toolbar (search + Add + I/O), card grid by day
@@ -58,7 +59,7 @@ components/
   ConfirmDialog.tsx            # <ConfirmProvider> + useConfirm() hook
   ManageSeasonsModal.tsx       # batch delete seasons
   TagFilterPicker.tsx          # multi-select tag picker with Enter-to-add
-  EmptyState.tsx
+  EmptyState.tsx               # fallback "no data yet" panel
 lib/
   db.ts                        # SQLite schema + read/write per key (server-only)
   storage.ts                   # client adapter — async load + debounced save via API
@@ -73,9 +74,9 @@ hooks/
 data/                          # SQLite DB lives here (gitignored)
 ```
 
-## Database
+## Storage
 
-Everything you add — schedule, collection, favorites, discover cache, prefs — is stored in `data/anime-tracker.db`. 
+Everything you add — schedule, collection, favorites, discover cache, prefs — is stored in `data/anime-tracker.db`.
 
 **Backup / restore:** copy the `data/` folder. Drop it back in to restore.
 
