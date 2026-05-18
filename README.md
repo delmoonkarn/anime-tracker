@@ -71,9 +71,9 @@ hooks/
 data/                          # SQLite DB lives here (gitignored)
 ```
 
-## Where your data lives
+## Database
 
-Everything you add — schedule, collection, hentai favorites, discover cache, prefs — is stored in `data/anime-tracker.db`. Writes are atomic and crash-safe.
+Everything you add — schedule, collection, favorites, discover cache, prefs — is stored in `data/anime-tracker.db`. 
 
 **Backup / restore:** copy the `data/` folder. Drop it back in to restore.
 

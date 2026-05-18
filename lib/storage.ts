@@ -23,9 +23,9 @@ const LEGACY_KEYS: Record<StorageKey, string> = {
   collection: 'anime-tracker-collection-v2',
   'discover-cache': 'anime-tracker-discover-v4',
   tags: 'anime-tracker-tags-v1',
-  'hentai-prefs': 'anime-tracker-hentai-prefs-v3',
-  // No legacy localStorage for hentai favorites — it's a new feature.
-  'hentai-favorites': '',
+  'h-prefs': 'anime-tracker-hentai-prefs-v3',
+  // No legacy localStorage for H favorites — it's a new feature.
+  'h-favorites': '',
 };
 
 type StorageKey =
@@ -33,8 +33,8 @@ type StorageKey =
   | 'collection'
   | 'discover-cache'
   | 'tags'
-  | 'hentai-prefs'
-  | 'hentai-favorites';
+  | 'h-prefs'
+  | 'h-favorites';
 
 async function readApi<T>(key: StorageKey): Promise<T | null> {
   if (typeof window === 'undefined') return null;
@@ -168,17 +168,17 @@ export function saveTags(tags: AnilistTag[]): void {
 }
 
 export async function loadHentaiPrefs(): Promise<HentaiPrefs | null> {
-  return loadOrMigrate<HentaiPrefs>('hentai-prefs');
+  return loadOrMigrate<HentaiPrefs>('h-prefs');
 }
 
 export function saveHentaiPrefs(prefs: HentaiPrefs): void {
-  scheduleSave('hentai-prefs', prefs);
+  scheduleSave('h-prefs', prefs);
 }
 
 export async function loadHentaiFavorites(): Promise<HentaiFavoriteEntry[]> {
-  return (await loadOrMigrate<HentaiFavoriteEntry[]>('hentai-favorites')) ?? [];
+  return (await loadOrMigrate<HentaiFavoriteEntry[]>('h-favorites')) ?? [];
 }
 
 export function saveHentaiFavorites(items: HentaiFavoriteEntry[]): void {
-  scheduleSave('hentai-favorites', items);
+  scheduleSave('h-favorites', items);
 }

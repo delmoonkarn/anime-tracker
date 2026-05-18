@@ -178,19 +178,19 @@ export function HentaiDiscoverPage({
     <div className="max-w-7xl mx-auto px-4 py-6">
       <div className="border-b border-zinc-800 pb-4 mb-6">
         <p className="text-xs uppercase tracking-wider text-zinc-500 font-semibold">
-          · Hentai · Discover ·
+          · H · Discover ·
         </p>
         <div className="mt-0.5 flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Flame className="w-5 h-5 text-rose-400" />
-            Hentai
+            H
             <AlertTriangle className="w-4 h-4 text-amber-400" />
           </h1>
           <button
             type="button"
             onClick={onOpenFavorites}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-zinc-800 text-zinc-300 hover:bg-rose-500 hover:text-white transition-colors"
-            title="Open hentai favorites"
+            title="Open H favorites"
           >
             <Heart className="w-4 h-4" />
             Favorites
@@ -328,7 +328,7 @@ export function HentaiDiscoverPage({
                       ? async () => {
                           const ok = await confirm({
                             title: 'Remove favorite',
-                            message: `Remove "${item.title}" from your hentai favorites?`,
+                            message: `Remove "${item.title}" from your H favorites?`,
                             kind: 'danger',
                             confirmText: 'Remove',
                           });

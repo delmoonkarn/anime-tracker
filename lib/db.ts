@@ -90,8 +90,8 @@ db.exec(`
     updated_at INTEGER NOT NULL
   );
 
-  /* Hentai favorites — intentionally separate from collection. */
-  CREATE TABLE IF NOT EXISTS hentai_favorites (
+  /* H favorites — intentionally separate from collection. */
+  CREATE TABLE IF NOT EXISTS h_favorites (
     anilist_id INTEGER PRIMARY KEY,
     title TEXT NOT NULL,
     title_english TEXT,
@@ -107,6 +107,35 @@ db.exec(`
     added_at INTEGER NOT NULL
   );
 `);
+
+// One-time migration: older databases used a `hentai_favorites` table and a
+// kv_store key named `hentai-prefs`. Move them over to the new H-prefixed
+// names so existing users don't lose their data.
+try {
+  const oldTable = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='hentai_favorites'")
+    .get();
+  if (oldTable) {
+    db.exec(`
+      INSERT OR IGNORE INTO h_favorites SELECT * FROM hentai_favorites;
+      DROP TABLE hentai_favorites;
+    `);
+    console.info('[db] migrated hentai_favorites → h_favorites');
+  }
+  const oldPrefs = db
+    .prepare("SELECT value FROM kv_store WHERE key = 'hentai-prefs'")
+    .get() as { value: string | null } | undefined;
+  if (oldPrefs && oldPrefs.value != null) {
+    db.prepare(
+      `INSERT INTO kv_store (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    ).run('h-prefs', oldPrefs.value, Date.now());
+    db.prepare("DELETE FROM kv_store WHERE key = 'hentai-prefs'").run();
+    console.info('[db] migrated kv_store hentai-prefs → h-prefs');
+  }
+} catch (err) {
+  console.warn('[db] H rename migration skipped:', err);
+}
 
 // ---- AppState (seasons + anime entries + activeSeasonId) -----------------
 
@@ -350,7 +379,7 @@ function writeKv(key: string, value: unknown): void {
 
 // ---- Hentai favorites -----------------------------------------------------
 
-interface HentaiFavoriteRow {
+interface HFavoriteRow {
   anilist_id: number;
   title: string;
   title_english: string | null;
@@ -368,8 +397,8 @@ interface HentaiFavoriteRow {
 
 function readHentaiFavorites(): HentaiFavoriteEntry[] {
   const rows = db
-    .prepare('SELECT * FROM hentai_favorites ORDER BY added_at DESC')
-    .all() as HentaiFavoriteRow[];
+    .prepare('SELECT * FROM h_favorites ORDER BY added_at DESC')
+    .all() as HFavoriteRow[];
   return rows.map((r) => {
     const startDate =
       r.start_year != null || r.start_month != null || r.start_day != null
@@ -392,9 +421,9 @@ function readHentaiFavorites(): HentaiFavoriteEntry[] {
 }
 
 const writeHentaiFavoritesTxn = db.transaction((items: HentaiFavoriteEntry[]) => {
-  db.prepare('DELETE FROM hentai_favorites').run();
+  db.prepare('DELETE FROM h_favorites').run();
   const ins = db.prepare(`
-    INSERT INTO hentai_favorites
+    INSERT INTO h_favorites
       (anilist_id, title, title_english, image_url, description, tags_json,
        format, episodes, average_score, start_year, start_month, start_day, added_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -429,8 +458,8 @@ export type DbKey =
   | 'collection'
   | 'discover-cache'
   | 'tags'
-  | 'hentai-prefs'
-  | 'hentai-favorites';
+  | 'h-prefs'
+  | 'h-favorites';
 
 export function readByKey(key: DbKey): unknown {
   switch (key) {
@@ -442,9 +471,9 @@ export function readByKey(key: DbKey): unknown {
       return readDiscoverCache();
     case 'tags':
       return readKv('tags') as AnilistTag[] | null;
-    case 'hentai-prefs':
-      return readKv('hentai-prefs') as HentaiPrefs | null;
-    case 'hentai-favorites':
+    case 'h-prefs':
+      return readKv('h-prefs') as HentaiPrefs | null;
+    case 'h-favorites':
       return readHentaiFavorites();
   }
 }
@@ -463,10 +492,10 @@ export function writeByKey(key: DbKey, value: unknown): void {
     case 'tags':
       writeKv('tags', value);
       return;
-    case 'hentai-prefs':
-      writeKv('hentai-prefs', value);
+    case 'h-prefs':
+      writeKv('h-prefs', value);
       return;
-    case 'hentai-favorites':
+    case 'h-favorites':
       writeHentaiFavorites(value as HentaiFavoriteEntry[]);
       return;
   }
@@ -478,7 +507,7 @@ const LEGACY_JSON: Record<string, DbKey> = {
   'collection.json': 'collection',
   'discover-cache.json': 'discover-cache',
   'tags.json': 'tags',
-  'hentai-prefs.json': 'hentai-prefs',
+  'hentai-prefs.json': 'h-prefs',
 };
 
 if (!g.__animeTrackerDb || true) {

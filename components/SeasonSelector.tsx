@@ -339,7 +339,7 @@ export function SeasonSelector({
                     : 'text-zinc-200'
                 }`}
               >
-                <span>Hentai</span>
+                <span>H</span>
                 <span className="text-xs text-rose-400">Browse</span>
               </button>
             </div>

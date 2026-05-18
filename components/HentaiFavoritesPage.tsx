@@ -50,14 +50,14 @@ export function HentaiFavoritesPage({ items, onRemove, onBack }: Props) {
           className="inline-flex items-center gap-1.5 text-xs text-zinc-400 hover:text-indigo-300 mb-2"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
-          Back to Hentai
+          Back to H
         </button>
         <p className="text-xs uppercase tracking-wider text-zinc-500 font-semibold">
-          Hentai · Favorites
+          H · Favorites
         </p>
         <h1 className="text-2xl font-bold mt-0.5 flex items-center gap-2">
           <Heart className="w-5 h-5 text-rose-400 fill-current" />
-          Hentai Favorites
+          H Favorites
           <span className="text-xs text-zinc-500 font-normal">· {items.length}</span>
         </h1>
 
@@ -111,10 +111,10 @@ export function HentaiFavoritesPage({ items, onRemove, onBack }: Props) {
       {items.length === 0 && (
         <div className="text-center py-24 max-w-md mx-auto">
           <Flame className="w-10 h-10 mx-auto mb-3 text-rose-400/60" />
-          <h2 className="text-lg font-semibold mb-1">No hentai favorites yet</h2>
+          <h2 className="text-lg font-semibold mb-1">No H favorites yet</h2>
           <p className="text-sm text-zinc-400">
-            Browse the Hentai page and click <strong>Add</strong> on any card to favorite
-            it here.
+            Browse the H page and click <strong>Add</strong> on any card to favorite it
+            here.
           </p>
         </div>
       )}
@@ -137,7 +137,7 @@ export function HentaiFavoritesPage({ items, onRemove, onBack }: Props) {
                 if (
                   await confirm({
                     title: 'Remove favorite',
-                    message: `Remove "${entry.title}" from your hentai favorites?`,
+                    message: `Remove "${entry.title}" from your H favorites?`,
                     kind: 'danger',
                     confirmText: 'Remove',
                   })

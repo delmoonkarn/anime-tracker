@@ -6,8 +6,8 @@ const ALLOWED: ReadonlySet<DbKey> = new Set<DbKey>([
   'collection',
   'discover-cache',
   'tags',
-  'hentai-prefs',
-  'hentai-favorites',
+  'h-prefs',
+  'h-favorites',
 ]);
 
 function isAllowed(key: string): key is DbKey {
