@@ -4,7 +4,6 @@ Personal anime tracker — schedule your watch list by season, discover what's a
 
 ## Stack
 
-| Layer        | Technology                                              |
 |--------------|---------------------------------------------------------|
 | Framework    | Next.js 14 (App Router), React 18, TypeScript           |
 | Styling      | Tailwind CSS                                            |
