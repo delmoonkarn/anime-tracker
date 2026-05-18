@@ -1,0 +1,506 @@
+// Server-side only. Do NOT import from client components.
+import Database from 'better-sqlite3';
+import { existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
+import { join } from 'node:path';
+import type {
+  AnilistTag,
+  AnimeEntry,
+  AppState,
+  CollectionEntry,
+  CollectionSection,
+  DayOfWeek,
+  DiscoverCache,
+  DiscoverCacheEntry,
+  DiscoverItem,
+  HentaiFavoriteEntry,
+  HentaiPrefs,
+  Season,
+} from './types';
+
+const DATA_DIR = join(process.cwd(), 'data');
+const DB_PATH = join(DATA_DIR, 'anime-tracker.db');
+
+mkdirSync(DATA_DIR, { recursive: true });
+
+// Reuse one connection per process (Next.js dev re-evaluates this file on
+// HMR; the module cache keeps the connection alive across renders within a
+// single dev session).
+const g = globalThis as unknown as { __animeTrackerDb?: Database.Database };
+const db: Database.Database = g.__animeTrackerDb ?? new Database(DB_PATH);
+g.__animeTrackerDb = db;
+
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+// ---- Schema ---------------------------------------------------------------
+db.exec(`
+  CREATE TABLE IF NOT EXISTS seasons (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS anime_entries (
+    id TEXT PRIMARY KEY,
+    season_id TEXT NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+    anilist_id INTEGER NOT NULL DEFAULT 0,
+    title TEXT NOT NULL,
+    title_english TEXT,
+    image_url TEXT,
+    day TEXT,
+    time TEXT,
+    platform TEXT,
+    platform_url TEXT,
+    status TEXT,
+    added_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_anime_season ON anime_entries(season_id);
+
+  CREATE TABLE IF NOT EXISTS collection (
+    anilist_id INTEGER NOT NULL,
+    section TEXT NOT NULL,
+    title TEXT NOT NULL,
+    title_english TEXT,
+    image_url TEXT,
+    description TEXT,
+    tags_json TEXT,
+    format TEXT,
+    episodes INTEGER,
+    average_score INTEGER,
+    start_year INTEGER,
+    start_month INTEGER,
+    start_day INTEGER,
+    added_at INTEGER NOT NULL,
+    PRIMARY KEY (anilist_id, section)
+  );
+
+  CREATE TABLE IF NOT EXISTS discover_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    season TEXT NOT NULL,
+    year INTEGER NOT NULL,
+    tags_json TEXT NOT NULL,
+    fetched_at INTEGER NOT NULL,
+    items_json TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_discover_lookup ON discover_cache(season, year);
+
+  CREATE TABLE IF NOT EXISTS kv_store (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at INTEGER NOT NULL
+  );
+
+  /* Hentai favorites — intentionally separate from collection. */
+  CREATE TABLE IF NOT EXISTS hentai_favorites (
+    anilist_id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    title_english TEXT,
+    image_url TEXT,
+    description TEXT,
+    tags_json TEXT,
+    format TEXT,
+    episodes INTEGER,
+    average_score INTEGER,
+    start_year INTEGER,
+    start_month INTEGER,
+    start_day INTEGER,
+    added_at INTEGER NOT NULL
+  );
+`);
+
+// ---- AppState (seasons + anime entries + activeSeasonId) -----------------
+
+interface SeasonRow {
+  id: string;
+  name: string;
+  created_at: number;
+}
+interface AnimeRow {
+  id: string;
+  season_id: string;
+  anilist_id: number;
+  title: string;
+  title_english: string | null;
+  image_url: string | null;
+  day: string | null;
+  time: string | null;
+  platform: string | null;
+  platform_url: string | null;
+  status: string | null;
+  added_at: number;
+}
+
+function readAppState(): AppState | null {
+  const seasonsRows = db
+    .prepare('SELECT * FROM seasons ORDER BY created_at ASC')
+    .all() as SeasonRow[];
+  const animesRows = db.prepare('SELECT * FROM anime_entries').all() as AnimeRow[];
+  if (seasonsRows.length === 0) return null;
+
+  const grouped = new Map<string, AnimeEntry[]>();
+  for (const r of animesRows) {
+    const list = grouped.get(r.season_id) ?? [];
+    list.push({
+      id: r.id,
+      anilistId: r.anilist_id,
+      title: r.title,
+      titleEnglish: r.title_english ?? undefined,
+      imageUrl: r.image_url ?? '',
+      day: (r.day as DayOfWeek | null) ?? null,
+      time: r.time ?? '',
+      platform: r.platform ?? '',
+      platformUrl: r.platform_url ?? '',
+      status: r.status ?? '',
+      addedAt: r.added_at,
+    });
+    grouped.set(r.season_id, list);
+  }
+  const seasons: Season[] = seasonsRows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    createdAt: r.created_at,
+    animes: grouped.get(r.id) ?? [],
+  }));
+
+  const activeRow = db
+    .prepare('SELECT value FROM kv_store WHERE key = ?')
+    .get('activeSeasonId') as { value: string | null } | undefined;
+  const activeSeasonId = activeRow?.value || null;
+
+  return { seasons, activeSeasonId };
+}
+
+const writeAppStateTxn = db.transaction((state: AppState) => {
+  db.prepare('DELETE FROM anime_entries').run();
+  db.prepare('DELETE FROM seasons').run();
+  const insSeason = db.prepare(
+    'INSERT INTO seasons (id, name, created_at) VALUES (?, ?, ?)',
+  );
+  const insAnime = db.prepare(`
+    INSERT INTO anime_entries
+      (id, season_id, anilist_id, title, title_english, image_url, day, time, platform, platform_url, status, added_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  for (const s of state.seasons) {
+    insSeason.run(s.id, s.name, s.createdAt);
+    for (const a of s.animes) {
+      insAnime.run(
+        a.id,
+        s.id,
+        a.anilistId ?? 0,
+        a.title,
+        a.titleEnglish ?? null,
+        a.imageUrl ?? null,
+        a.day ?? null,
+        a.time ?? null,
+        a.platform ?? null,
+        a.platformUrl ?? null,
+        a.status ?? null,
+        a.addedAt,
+      );
+    }
+  }
+  db.prepare(
+    `INSERT INTO kv_store (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).run('activeSeasonId', state.activeSeasonId ?? null, Date.now());
+});
+
+function writeAppState(state: AppState): void {
+  writeAppStateTxn(state);
+}
+
+// ---- Collection -----------------------------------------------------------
+
+interface CollectionRow {
+  anilist_id: number;
+  section: string;
+  title: string;
+  title_english: string | null;
+  image_url: string | null;
+  description: string | null;
+  tags_json: string | null;
+  format: string | null;
+  episodes: number | null;
+  average_score: number | null;
+  start_year: number | null;
+  start_month: number | null;
+  start_day: number | null;
+  added_at: number;
+}
+
+function rowToCollectionEntry(r: CollectionRow): CollectionEntry {
+  const startDate =
+    r.start_year != null || r.start_month != null || r.start_day != null
+      ? { year: r.start_year, month: r.start_month, day: r.start_day }
+      : undefined;
+  return {
+    anilistId: r.anilist_id,
+    section: r.section as CollectionSection,
+    title: r.title,
+    titleEnglish: r.title_english ?? undefined,
+    imageUrl: r.image_url ?? '',
+    description: r.description ?? undefined,
+    tags: r.tags_json ? JSON.parse(r.tags_json) : [],
+    format: r.format ?? undefined,
+    episodes: r.episodes ?? undefined,
+    averageScore: r.average_score ?? undefined,
+    startDate,
+    addedAt: r.added_at,
+  };
+}
+
+function readCollection(): CollectionEntry[] {
+  const rows = db.prepare('SELECT * FROM collection').all() as CollectionRow[];
+  return rows.map(rowToCollectionEntry);
+}
+
+const writeCollectionTxn = db.transaction((items: CollectionEntry[]) => {
+  db.prepare('DELETE FROM collection').run();
+  const ins = db.prepare(`
+    INSERT INTO collection
+      (anilist_id, section, title, title_english, image_url, description,
+       tags_json, format, episodes, average_score, start_year, start_month, start_day, added_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  for (const e of items) {
+    ins.run(
+      e.anilistId,
+      e.section,
+      e.title,
+      e.titleEnglish ?? null,
+      e.imageUrl ?? null,
+      e.description ?? null,
+      JSON.stringify(e.tags ?? []),
+      e.format ?? null,
+      e.episodes ?? null,
+      e.averageScore ?? null,
+      e.startDate?.year ?? null,
+      e.startDate?.month ?? null,
+      e.startDate?.day ?? null,
+      e.addedAt,
+    );
+  }
+});
+
+function writeCollection(items: CollectionEntry[]): void {
+  writeCollectionTxn(items);
+}
+
+// ---- Discover cache -------------------------------------------------------
+
+interface DiscoverRow {
+  id: number;
+  season: string;
+  year: number;
+  tags_json: string;
+  fetched_at: number;
+  items_json: string;
+}
+
+function readDiscoverCache(): DiscoverCache {
+  const rows = db
+    .prepare('SELECT * FROM discover_cache ORDER BY fetched_at DESC')
+    .all() as DiscoverRow[];
+  const entries: DiscoverCacheEntry[] = rows.map((r) => ({
+    season: r.season as DiscoverCacheEntry['season'],
+    year: r.year,
+    tags: JSON.parse(r.tags_json) as string[],
+    fetchedAt: r.fetched_at,
+    items: JSON.parse(r.items_json) as DiscoverItem[],
+  }));
+  return { entries };
+}
+
+const writeDiscoverTxn = db.transaction((cache: DiscoverCache) => {
+  db.prepare('DELETE FROM discover_cache').run();
+  const ins = db.prepare(`
+    INSERT INTO discover_cache (season, year, tags_json, fetched_at, items_json)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  for (const e of cache.entries) {
+    ins.run(e.season, e.year, JSON.stringify(e.tags), e.fetchedAt, JSON.stringify(e.items));
+  }
+});
+
+function writeDiscoverCache(cache: DiscoverCache): void {
+  writeDiscoverTxn(cache);
+}
+
+// ---- Simple key-value pairs (tags cache, hentai prefs) -------------------
+
+function readKv(key: string): unknown | null {
+  const row = db
+    .prepare('SELECT value FROM kv_store WHERE key = ?')
+    .get(key) as { value: string | null } | undefined;
+  if (!row || row.value == null) return null;
+  try {
+    return JSON.parse(row.value);
+  } catch {
+    return null;
+  }
+}
+
+function writeKv(key: string, value: unknown): void {
+  db.prepare(
+    `INSERT INTO kv_store (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).run(key, JSON.stringify(value), Date.now());
+}
+
+// ---- Hentai favorites -----------------------------------------------------
+
+interface HentaiFavoriteRow {
+  anilist_id: number;
+  title: string;
+  title_english: string | null;
+  image_url: string | null;
+  description: string | null;
+  tags_json: string | null;
+  format: string | null;
+  episodes: number | null;
+  average_score: number | null;
+  start_year: number | null;
+  start_month: number | null;
+  start_day: number | null;
+  added_at: number;
+}
+
+function readHentaiFavorites(): HentaiFavoriteEntry[] {
+  const rows = db
+    .prepare('SELECT * FROM hentai_favorites ORDER BY added_at DESC')
+    .all() as HentaiFavoriteRow[];
+  return rows.map((r) => {
+    const startDate =
+      r.start_year != null || r.start_month != null || r.start_day != null
+        ? { year: r.start_year, month: r.start_month, day: r.start_day }
+        : undefined;
+    return {
+      anilistId: r.anilist_id,
+      title: r.title,
+      titleEnglish: r.title_english ?? undefined,
+      imageUrl: r.image_url ?? '',
+      description: r.description ?? undefined,
+      tags: r.tags_json ? JSON.parse(r.tags_json) : [],
+      format: r.format ?? undefined,
+      episodes: r.episodes ?? undefined,
+      averageScore: r.average_score ?? undefined,
+      startDate,
+      addedAt: r.added_at,
+    };
+  });
+}
+
+const writeHentaiFavoritesTxn = db.transaction((items: HentaiFavoriteEntry[]) => {
+  db.prepare('DELETE FROM hentai_favorites').run();
+  const ins = db.prepare(`
+    INSERT INTO hentai_favorites
+      (anilist_id, title, title_english, image_url, description, tags_json,
+       format, episodes, average_score, start_year, start_month, start_day, added_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  for (const e of items) {
+    ins.run(
+      e.anilistId,
+      e.title,
+      e.titleEnglish ?? null,
+      e.imageUrl ?? null,
+      e.description ?? null,
+      JSON.stringify(e.tags ?? []),
+      e.format ?? null,
+      e.episodes ?? null,
+      e.averageScore ?? null,
+      e.startDate?.year ?? null,
+      e.startDate?.month ?? null,
+      e.startDate?.day ?? null,
+      e.addedAt,
+    );
+  }
+});
+
+function writeHentaiFavorites(items: HentaiFavoriteEntry[]): void {
+  writeHentaiFavoritesTxn(items);
+}
+
+// ---- Public router for the API route --------------------------------------
+
+export type DbKey =
+  | 'state'
+  | 'collection'
+  | 'discover-cache'
+  | 'tags'
+  | 'hentai-prefs'
+  | 'hentai-favorites';
+
+export function readByKey(key: DbKey): unknown {
+  switch (key) {
+    case 'state':
+      return readAppState();
+    case 'collection':
+      return readCollection();
+    case 'discover-cache':
+      return readDiscoverCache();
+    case 'tags':
+      return readKv('tags') as AnilistTag[] | null;
+    case 'hentai-prefs':
+      return readKv('hentai-prefs') as HentaiPrefs | null;
+    case 'hentai-favorites':
+      return readHentaiFavorites();
+  }
+}
+
+export function writeByKey(key: DbKey, value: unknown): void {
+  switch (key) {
+    case 'state':
+      writeAppState(value as AppState);
+      return;
+    case 'collection':
+      writeCollection(value as CollectionEntry[]);
+      return;
+    case 'discover-cache':
+      writeDiscoverCache(value as DiscoverCache);
+      return;
+    case 'tags':
+      writeKv('tags', value);
+      return;
+    case 'hentai-prefs':
+      writeKv('hentai-prefs', value);
+      return;
+    case 'hentai-favorites':
+      writeHentaiFavorites(value as HentaiFavoriteEntry[]);
+      return;
+  }
+}
+
+// ---- One-time migration from JSON files (if present) ---------------------
+const LEGACY_JSON: Record<string, DbKey> = {
+  'state.json': 'state',
+  'collection.json': 'collection',
+  'discover-cache.json': 'discover-cache',
+  'tags.json': 'tags',
+  'hentai-prefs.json': 'hentai-prefs',
+};
+
+if (!g.__animeTrackerDb || true) {
+  // Run on first import only by leveraging the module cache.
+  // (The 'true' guard is defensive — schema is created via IF NOT EXISTS so
+  // re-running is idempotent. Migration is idempotent because we rename
+  // legacy files with .imported once successfully ingested.)
+  for (const [file, key] of Object.entries(LEGACY_JSON)) {
+    const path = join(DATA_DIR, file);
+    if (!existsSync(path)) continue;
+    try {
+      const text = readFileSync(path, 'utf-8');
+      if (!text || text === 'null') {
+        renameSync(path, path + '.imported');
+        continue;
+      }
+      const data = JSON.parse(text);
+      writeByKey(key, data);
+      renameSync(path, path + '.imported');
+      console.info(`[db] Imported legacy ${file} into anime-tracker.db`);
+    } catch (err) {
+      console.warn(`[db] Failed to migrate ${file}:`, err);
+    }
+  }
+}

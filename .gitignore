@@ -1,0 +1,33 @@
+# dependencies
+node_modules/
+
+# next.js
+.next/
+out/
+next-env.d.ts.bak
+
+# env / secrets
+.env*
+!.env.example
+
+# editor / OS
+.DS_Store
+.vscode/
+.idea/
+Thumbs.db
+
+# logs
+*.log
+npm-debug.log*
+
+# typescript incremental cache
+*.tsbuildinfo
+
+# user data — stays local
+data/
+
+# build artifacts (only at root — icon/icon.ico is source, do keep it)
+/icon.ico
+/AnimeTracker.exe
+/ATracker.exe
+/_pkg_warmup.exe

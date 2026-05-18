@@ -1,0 +1,716 @@
+'use client';
+
+import { useEffect, useMemo, useState } from 'react';
+import { Loader2 } from 'lucide-react';
+import { SeasonSelector } from '@/components/SeasonSelector';
+import { ScheduleGrid } from '@/components/ScheduleGrid';
+import { AddAnimeModal } from '@/components/AddAnimeModal';
+import { EmptyState } from '@/components/EmptyState';
+import { ManageSeasonsModal } from '@/components/ManageSeasonsModal';
+import { DiscoverPage } from '@/components/DiscoverPage';
+import { HentaiDiscoverPage } from '@/components/HentaiDiscoverPage';
+import { HentaiFavoritesPage } from '@/components/HentaiFavoritesPage';
+import { CollectionPage } from '@/components/CollectionPage';
+import { useConfirm } from '@/components/ConfirmDialog';
+import type {
+  AnimeEntry,
+  AnimeSeason,
+  AppState,
+  AppView,
+  CollectionEntry,
+  CollectionSection,
+  DiscoverCache,
+  DiscoverCacheEntry,
+  DiscoverItem,
+  DiscoverVariant,
+  HentaiFavoriteEntry,
+  Season,
+} from '@/lib/types';
+import type { ImportProgress } from '@/lib/import';
+import {
+  loadCollection,
+  loadDiscoverCache,
+  loadHentaiFavorites,
+  loadState,
+  saveCollection,
+  saveDiscoverCache,
+  saveHentaiFavorites,
+  saveState,
+} from '@/lib/storage';
+import { getCurrentAnimeSeasonRef, newId, tagsMatch } from '@/lib/utils';
+
+function guessCurrentSeason(): string {
+  const now = new Date();
+  const m = now.getMonth();
+  const y = now.getFullYear();
+  let season = 'Winter';
+  if (m >= 2 && m <= 4) season = 'Spring';
+  else if (m >= 5 && m <= 7) season = 'Summer';
+  else if (m >= 8 && m <= 10) season = 'Fall';
+  return `${season} ${y}`;
+}
+
+function defaultState(): AppState {
+  const seasonId = newId();
+  return {
+    seasons: [{ id: seasonId, name: guessCurrentSeason(), createdAt: Date.now(), animes: [] }],
+    activeSeasonId: seasonId,
+  };
+}
+
+export default function HomePage() {
+  const [state, setState] = useState<AppState | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<AnimeEntry | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
+  const [manageOpen, setManageOpen] = useState(false);
+  const [view, setView] = useState<AppView>('schedule');
+  const [collection, setCollection] = useState<CollectionEntry[]>([]);
+  const [hentaiFavorites, setHentaiFavorites] = useState<HentaiFavoriteEntry[]>([]);
+  const [discoverCache, setDiscoverCache] = useState<DiscoverCache>({ entries: [] });
+  const [importingCollection, setImportingCollection] = useState(false);
+  const confirm = useConfirm();
+  // Becomes true once initial load from localStorage has completed. The save
+  // effects below gate on this so they don't overwrite stored data with the
+  // useState defaults during the brief window before the load commits.
+  const [hydrated, setHydrated] = useState(false);
+
+  const discoverDefaultRef = useMemo(() => getCurrentAnimeSeasonRef(), []);
+
+  useEffect(() => {
+    (async () => {
+      const [loaded, loadedCollection, loadedDiscover, loadedHentaiFavs] =
+        await Promise.all([
+          loadState(),
+          loadCollection(),
+          loadDiscoverCache(),
+          loadHentaiFavorites(),
+        ]);
+      setState(loaded ?? defaultState());
+      setCollection(loadedCollection);
+      setDiscoverCache(loadedDiscover);
+      setHentaiFavorites(loadedHentaiFavs);
+      setHydrated(true);
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated || !state) return;
+    saveState(state);
+  }, [state, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    saveCollection(collection);
+  }, [collection, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    saveDiscoverCache(discoverCache);
+  }, [discoverCache, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    saveHentaiFavorites(hentaiFavorites);
+  }, [hentaiFavorites, hydrated]);
+
+  const activeSeason: Season | null = useMemo(() => {
+    if (!state) return null;
+    return state.seasons.find((s) => s.id === state.activeSeasonId) ?? state.seasons[0] ?? null;
+  }, [state]);
+
+  if (!state) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-zinc-500 text-sm">
+        Loading…
+      </div>
+    );
+  }
+
+  const handleCreateSeason = (name: string) => {
+    setState((prev) => {
+      if (!prev) return prev;
+      const id = newId();
+      const next: Season = { id, name, createdAt: Date.now(), animes: [] };
+      return { seasons: [...prev.seasons, next], activeSeasonId: id };
+    });
+  };
+
+  const handleDeleteSeasons = (ids: string[]) => {
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    setState((prev) => {
+      if (!prev) return prev;
+      const remaining = prev.seasons.filter((s) => !idSet.has(s.id));
+      return {
+        seasons: remaining,
+        activeSeasonId:
+          prev.activeSeasonId && idSet.has(prev.activeSeasonId)
+            ? (remaining[0]?.id ?? null)
+            : prev.activeSeasonId,
+      };
+    });
+  };
+
+  const handleSelectSeason = (id: string) => {
+    setState((prev) => (prev ? { ...prev, activeSeasonId: id } : prev));
+    setView('schedule');
+  };
+
+  /** Jumps to the schedule view, switching to the calendar's current season
+   *  (e.g. "Spring 2026") if one exists in the tracker. */
+  const handleJumpHome = () => {
+    setView('schedule');
+    setState((prev) => {
+      if (!prev) return prev;
+      const target = prev.seasons.find(
+        (s) => s.name.trim().toLowerCase() === discoverDefaultRef.name.toLowerCase(),
+      );
+      if (target && target.id !== prev.activeSeasonId) {
+        return { ...prev, activeSeasonId: target.id };
+      }
+      return prev;
+    });
+  };
+
+  /** Adds an item to the named tracker season; creates the season if missing. */
+  const addItemToNamedSeason = (item: DiscoverItem, seasonName: string) => {
+    setState((prev) => {
+      if (!prev) return prev;
+      const existing = prev.seasons.find((s) => s.name === seasonName);
+      let seasons = prev.seasons;
+      let targetId: string;
+      if (!existing) {
+        const created: Season = {
+          id: newId(),
+          name: seasonName,
+          createdAt: Date.now(),
+          animes: [],
+        };
+        seasons = [...prev.seasons, created];
+        targetId = created.id;
+      } else {
+        targetId = existing.id;
+        if (existing.animes.some((a) => a.anilistId === item.anilistId)) return prev;
+      }
+      const entry: AnimeEntry = {
+        id: newId(),
+        anilistId: item.anilistId,
+        title: item.title,
+        titleEnglish: item.titleEnglish,
+        imageUrl: item.imageUrl,
+        day: null,
+        time: '',
+        platform: '',
+        platformUrl: '',
+        status: '',
+        addedAt: Date.now(),
+      };
+      return {
+        ...prev,
+        seasons: seasons.map((s) =>
+          s.id === targetId ? { ...s, animes: [...s.animes, entry] } : s,
+        ),
+        activeSeasonId: prev.activeSeasonId ?? targetId,
+      };
+    });
+  };
+
+  const isInNamedSeason = (anilistId: number, seasonName: string): boolean => {
+    if (!state) return false;
+    const target = state.seasons.find((s) => s.name === seasonName);
+    return target ? target.animes.some((a) => a.anilistId === anilistId) : false;
+  };
+
+  const activeDiscoverVariant: DiscoverVariant | null =
+    view === 'discover-season'
+      ? 'season'
+      : view === 'discover-hentai' || view === 'hentai-favorites'
+        ? 'hentai'
+        : view === 'collection-favorites' || view === 'collection-interested'
+          ? 'collection'
+          : null;
+
+  // ---- Hentai favorites (separate DB table) -------------------------------
+  const hentaiFavIds = new Set(hentaiFavorites.map((h) => h.anilistId));
+  const isHentaiFavorited = (anilistId: number) =>
+    anilistId > 0 && hentaiFavIds.has(anilistId);
+
+  const addHentaiFavorite = (item: DiscoverItem) => {
+    setHentaiFavorites((prev) => {
+      if (prev.some((h) => h.anilistId === item.anilistId)) return prev;
+      return [...prev, { ...item, addedAt: Date.now() }];
+    });
+  };
+
+  const removeHentaiFavorite = (anilistId: number) => {
+    setHentaiFavorites((prev) => prev.filter((h) => h.anilistId !== anilistId));
+  };
+
+  // ---- Collection (favorites + interested) ----
+  // Don't useMemo: this block sits after `if (!state) return` so adding hooks
+  // here would violate the rule-of-hooks. Tiny computations, fine to inline.
+  const favoritedIds = new Set(
+    collection.filter((c) => c.section === 'favorites').map((c) => c.anilistId),
+  );
+  const interestedIds = new Set(
+    collection.filter((c) => c.section === 'interested').map((c) => c.anilistId),
+  );
+
+  const isFavorited = (anilistId: number) =>
+    anilistId > 0 && favoritedIds.has(anilistId);
+  const isInterested = (anilistId: number) =>
+    anilistId > 0 && interestedIds.has(anilistId);
+
+  const addToCollection = (item: DiscoverItem, section: CollectionSection) => {
+    setCollection((prev) => {
+      const others = prev.filter(
+        (c) => !(c.anilistId === item.anilistId && c.section === section),
+      );
+      // If item is already in the other section, move it (a show can be in
+      // both sections — they're independent lists — so we don't remove from
+      // the other). Just add to this section.
+      return [
+        ...others,
+        { ...item, section, addedAt: Date.now() },
+      ];
+    });
+    // Async enrichment for entries added without full data (e.g. from schedule
+    // card toggle, which only has the bare entry). Skips if we already have
+    // a startDate to avoid an unnecessary roundtrip.
+    if (!item.startDate || !item.tags.length) {
+      (async () => {
+        try {
+          const { getAnimeById } = await import('@/lib/anilist');
+          const { toDiscoverItem } = await import('@/lib/discover');
+          const m = await getAnimeById(item.anilistId);
+          if (!m) return;
+          const enriched = toDiscoverItem(m);
+          setCollection((prev) =>
+            prev.map((c) =>
+              c.anilistId === item.anilistId && c.section === section
+                ? { ...c, ...enriched, section, addedAt: c.addedAt }
+                : c,
+            ),
+          );
+        } catch (err) {
+          console.warn('Failed to enrich collection entry', err);
+        }
+      })();
+    }
+  };
+
+  const removeFromCollection = (anilistId: number, section: CollectionSection) => {
+    setCollection((prev) =>
+      prev.filter((c) => !(c.anilistId === anilistId && c.section === section)),
+    );
+  };
+
+  const toggleFavoriteFromSchedule = (entry: AnimeEntry) => {
+    if (entry.anilistId <= 0) return;
+    if (favoritedIds.has(entry.anilistId)) {
+      removeFromCollection(entry.anilistId, 'favorites');
+    } else {
+      addToCollection(
+        {
+          anilistId: entry.anilistId,
+          title: entry.title,
+          titleEnglish: entry.titleEnglish,
+          imageUrl: entry.imageUrl,
+          tags: [],
+        },
+        'favorites',
+      );
+    }
+  };
+
+  const toggleInterestedFromSchedule = (entry: AnimeEntry) => {
+    if (entry.anilistId <= 0) return;
+    if (interestedIds.has(entry.anilistId)) {
+      removeFromCollection(entry.anilistId, 'interested');
+    } else {
+      addToCollection(
+        {
+          anilistId: entry.anilistId,
+          title: entry.title,
+          titleEnglish: entry.titleEnglish,
+          imageUrl: entry.imageUrl,
+          tags: [],
+        },
+        'interested',
+      );
+    }
+  };
+
+  const toggleFavoriteFromDiscover = (item: DiscoverItem) => {
+    if (favoritedIds.has(item.anilistId)) {
+      removeFromCollection(item.anilistId, 'favorites');
+    } else {
+      addToCollection(item, 'favorites');
+    }
+  };
+
+  const toggleInterestedFromDiscover = (item: DiscoverItem) => {
+    if (interestedIds.has(item.anilistId)) {
+      removeFromCollection(item.anilistId, 'interested');
+    } else {
+      addToCollection(item, 'interested');
+    }
+  };
+
+  const handleSaveAnime = (entry: AnimeEntry) => {
+    setState((prev) => {
+      if (!prev || !activeSeason) return prev;
+      return {
+        ...prev,
+        seasons: prev.seasons.map((s) => {
+          if (s.id !== activeSeason.id) return s;
+          const exists = s.animes.some((a) => a.id === entry.id);
+          return {
+            ...s,
+            animes: exists
+              ? s.animes.map((a) => (a.id === entry.id ? entry : a))
+              : [...s.animes, entry],
+          };
+        }),
+      };
+    });
+  };
+
+  const handleDeleteAnime = (id: string) => {
+    setState((prev) => {
+      if (!prev || !activeSeason) return prev;
+      return {
+        ...prev,
+        seasons: prev.seasons.map((s) =>
+          s.id === activeSeason.id ? { ...s, animes: s.animes.filter((a) => a.id !== id) } : s,
+        ),
+      };
+    });
+  };
+
+  const openAdd = () => {
+    setEditing(null);
+    setModalOpen(true);
+  };
+
+  const handleExport = async () => {
+    if (!state || state.seasons.length === 0 || exporting) return;
+    setExporting(true);
+    try {
+      const { exportWorkbook } = await import('@/lib/export');
+      await exportWorkbook(state.seasons);
+    } catch (err) {
+      console.error('Export failed', err);
+      await confirm({
+        title: 'Export failed',
+        message: 'Something went wrong while exporting. See the browser console for details.',
+        alert: true,
+        kind: 'danger',
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleImport = async (file: File) => {
+    if (importing) return;
+    setImporting(true);
+    setImportProgress({ phase: 'parsing', matched: 0, total: 0 });
+    try {
+      const { importWorkbook } = await import('@/lib/import');
+      const { seasons: imported, summary } = await importWorkbook(file, (p) =>
+        setImportProgress(p),
+      );
+      if (imported.length === 0) {
+        await confirm({
+          title: 'Nothing to import',
+          message: 'No anime found in that file.',
+          alert: true,
+          kind: 'warning',
+        });
+        return;
+      }
+
+      let mergedAdds = 0;
+      let mergedSkipped = 0;
+      setState((prev) => {
+        if (!prev) return prev;
+        let mergedSeasons = [...prev.seasons];
+        for (const importSeason of imported) {
+          const existingIdx = mergedSeasons.findIndex(
+            (s) => s.name.toLowerCase() === importSeason.name.toLowerCase(),
+          );
+          if (existingIdx === -1) {
+            // Brand new season → add it as-is.
+            mergedSeasons.push(importSeason);
+            mergedAdds += importSeason.animes.length;
+          } else {
+            // Merge into existing season. Dedupe by anilistId (>0) first, then
+            // by case-insensitive title fallback for unbound entries.
+            const target = mergedSeasons[existingIdx];
+            const existingKeys = new Set(
+              target.animes.map((a) =>
+                a.anilistId > 0 ? `id:${a.anilistId}` : `t:${a.title.trim().toLowerCase()}`,
+              ),
+            );
+            const toAdd = importSeason.animes.filter((a) => {
+              const k =
+                a.anilistId > 0
+                  ? `id:${a.anilistId}`
+                  : `t:${a.title.trim().toLowerCase()}`;
+              if (existingKeys.has(k)) {
+                mergedSkipped++;
+                return false;
+              }
+              existingKeys.add(k);
+              mergedAdds++;
+              return true;
+            });
+            mergedSeasons = mergedSeasons.map((s, i) =>
+              i === existingIdx ? { ...s, animes: [...s.animes, ...toAdd] } : s,
+            );
+          }
+        }
+        return {
+          seasons: mergedSeasons,
+          activeSeasonId: prev.activeSeasonId ?? mergedSeasons[0]?.id ?? null,
+        };
+      });
+
+      const unmatched = summary.animesImported - summary.animesMatchedOnAniList;
+      await confirm({
+        title: 'Import complete',
+        message:
+          `Imported ${summary.seasonsImported} season(s), ${summary.animesImported} anime.\n` +
+          `Added ${mergedAdds}` +
+          (mergedSkipped > 0 ? `, skipped ${mergedSkipped} duplicate(s)` : '') +
+          `.\n${summary.animesMatchedOnAniList} matched on AniList` +
+          (unmatched > 0 ? ` · ${unmatched} kept original title (no match)` : '') +
+          '.',
+        alert: true,
+      });
+    } catch (err) {
+      console.error('Import failed', err);
+      await confirm({
+        title: 'Import failed',
+        message:
+          'The file may not match the expected format. See the browser console for details.',
+        alert: true,
+        kind: 'danger',
+      });
+    } finally {
+      setImporting(false);
+      setImportProgress(null);
+    }
+  };
+
+  // Collection import — merges into the existing collection by (anilistId, section)
+  const handleCollectionImport = async (file: File) => {
+    if (importingCollection) return;
+    setImportingCollection(true);
+    try {
+      const { importCollection } = await import('@/lib/import');
+      const imported = await importCollection(file);
+      if (imported.length === 0) {
+        await confirm({
+          title: 'Nothing to import',
+          message:
+            "Couldn't find any rows under sheets named 'Favorites' or 'Interested'.",
+          alert: true,
+          kind: 'warning',
+        });
+        return;
+      }
+      let added = 0;
+      let skipped = 0;
+      setCollection((prev) => {
+        const seen = new Set(prev.map((c) => `${c.anilistId}:${c.section}`));
+        const merged = [...prev];
+        for (const e of imported) {
+          const key = `${e.anilistId}:${e.section}`;
+          if (seen.has(key)) {
+            skipped++;
+            continue;
+          }
+          seen.add(key);
+          merged.push(e);
+          added++;
+        }
+        return merged;
+      });
+      await confirm({
+        title: 'Collection import complete',
+        message: `Added ${added} entr${added === 1 ? 'y' : 'ies'}${skipped > 0 ? ` · skipped ${skipped} duplicate(s)` : ''}.`,
+        alert: true,
+      });
+    } catch (err) {
+      console.error('Collection import failed', err);
+      await confirm({
+        title: 'Collection import failed',
+        message:
+          'The file may not match the expected format. See the browser console for details.',
+        alert: true,
+        kind: 'danger',
+      });
+    } finally {
+      setImportingCollection(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen">
+      <SeasonSelector
+        seasons={state.seasons}
+        activeSeasonId={activeSeason?.id ?? null}
+        onSelect={handleSelectSeason}
+        onCreate={handleCreateSeason}
+        onManage={() => setManageOpen(true)}
+        onJumpHome={handleJumpHome}
+        onDiscover={(variant) => {
+          setView(
+            variant === 'season'
+              ? 'discover-season'
+              : variant === 'hentai'
+                ? 'discover-hentai'
+                : 'collection-favorites',
+          );
+        }}
+        activeDiscoverVariant={activeDiscoverVariant}
+        isScheduleActive={view === 'schedule'}
+      />
+
+      {view === 'discover-season' ? (
+        <DiscoverPage
+          defaultRef={discoverDefaultRef}
+          isAddedTo={isInNamedSeason}
+          onAdd={addItemToNamedSeason}
+          isFavorited={isFavorited}
+          isInterested={isInterested}
+          onToggleFavorite={toggleFavoriteFromDiscover}
+          onToggleInterested={toggleInterestedFromDiscover}
+          cacheEntries={discoverCache.entries}
+          onCacheUpdate={(entry: DiscoverCacheEntry) =>
+            setDiscoverCache((prev) => {
+              // Drop any prior entry for the same season/year/tags, prepend
+              // the new one, cap the array at 4 (LRU eviction).
+              const others = prev.entries.filter(
+                (e) =>
+                  !(
+                    e.season === entry.season &&
+                    e.year === entry.year &&
+                    tagsMatch(e.tags, entry.tags)
+                  ),
+              );
+              return { entries: [entry, ...others].slice(0, 4) };
+            })
+          }
+        />
+      ) : view === 'discover-hentai' ? (
+        <HentaiDiscoverPage
+          isFavoritedHentai={isHentaiFavorited}
+          onAddHentaiFavorite={addHentaiFavorite}
+          onRemoveHentaiFavorite={removeHentaiFavorite}
+          hentaiFavoritesCount={hentaiFavorites.length}
+          onOpenFavorites={() => setView('hentai-favorites')}
+        />
+      ) : view === 'hentai-favorites' ? (
+        <HentaiFavoritesPage
+          items={hentaiFavorites}
+          onRemove={removeHentaiFavorite}
+          onBack={() => setView('discover-hentai')}
+        />
+      ) : view === 'collection-favorites' || view === 'collection-interested' ? (
+        <CollectionPage
+          section={view === 'collection-favorites' ? 'favorites' : 'interested'}
+          collection={collection}
+          onAdd={addToCollection}
+          onRemove={removeFromCollection}
+          onSwitchSection={(s) =>
+            setView(s === 'favorites' ? 'collection-favorites' : 'collection-interested')
+          }
+          onImport={handleCollectionImport}
+          importing={importingCollection}
+        />
+      ) : !activeSeason ? (
+        <EmptyState
+          title="No seasons yet"
+          description="Create your first season from the top bar to get started."
+        />
+      ) : (
+        <ScheduleGrid
+          animes={activeSeason.animes}
+          seasonName={activeSeason.name}
+          onEdit={(entry) => {
+            setEditing(entry);
+            setModalOpen(true);
+          }}
+          onDelete={handleDeleteAnime}
+          onAddAnime={openAdd}
+          onImport={handleImport}
+          onExport={handleExport}
+          onToggleFavorite={toggleFavoriteFromSchedule}
+          onToggleInterested={toggleInterestedFromSchedule}
+          isFavorited={isFavorited}
+          isInterested={isInterested}
+          importing={importing}
+          exporting={exporting}
+        />
+      )}
+
+      <AddAnimeModal
+        open={modalOpen}
+        initial={editing}
+        onClose={() => {
+          setModalOpen(false);
+          setEditing(null);
+        }}
+        onSave={handleSaveAnime}
+      />
+
+      <ManageSeasonsModal
+        open={manageOpen}
+        seasons={state.seasons}
+        onClose={() => setManageOpen(false)}
+        onDeleteMany={handleDeleteSeasons}
+      />
+
+      {importProgress && <ImportOverlay progress={importProgress} />}
+    </div>
+  );
+}
+
+function ImportOverlay({ progress }: { progress: ImportProgress }) {
+  const pct =
+    progress.total > 0 ? Math.round((progress.matched / progress.total) * 100) : 0;
+  const label =
+    progress.phase === 'parsing'
+      ? 'Reading workbook…'
+      : progress.phase === 'matching'
+        ? `Looking up on AniList… ${progress.matched} / ${progress.total}`
+        : 'Finishing up…';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+        <div className="flex items-center gap-3 mb-4">
+          <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />
+          <h2 className="text-sm font-semibold">Importing workbook</h2>
+        </div>
+        <p className="text-sm text-zinc-300 mb-3">{label}</p>
+        <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
+          <div
+            className="h-full bg-indigo-500 transition-all duration-300"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <p className="mt-2 text-xs text-zinc-500">
+          AniList lookups are rate-limited (10 titles per request, ~1s between
+          batches).
+        </p>
+      </div>
+    </div>
+  );
+}
