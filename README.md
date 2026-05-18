@@ -8,8 +8,10 @@ Personal anime tracker — schedule your watch list by season, discover what's a
 |--------------|---------------------------------------------------------|
 | Framework    | Next.js 14 (App Router), React 18, TypeScript           |
 | Styling      | Tailwind CSS                                            |
+| Icons        | Lucide React                                            |
 | Persistence  | SQLite via `better-sqlite3` — `data/anime-tracker.db`   |
 | Spreadsheets | ExcelJS (`.xlsx` import / export)                       |
+| External API | [AniList](https://anilist.co/) GraphQL (no key required) |
 
 ## Run it
 
