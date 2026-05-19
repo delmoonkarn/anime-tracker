@@ -39,8 +39,3 @@ export function toDiscoverItem(m: AnilistMedia): DiscoverItem {
     nextAiringAt: m.nextAiringEpisode?.airingAt ?? undefined,
   };
 }
-
-/** Pulls the startDate (used for sorting collection entries). */
-export function getReleaseDate(m: AnilistMedia) {
-  return m.startDate ?? null;
-}

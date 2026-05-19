@@ -203,35 +203,3 @@ export function getCurrentAnimeSeasonRef(date: Date = new Date()): AnimeSeasonRe
   const idx = m <= 2 ? 0 : m <= 5 ? 1 : m <= 8 ? 2 : 3;
   return { season: SEASON_CODES[idx], year: y, name: `${SEASON_DISPLAY[idx]} ${y}` };
 }
-
-/**
- * Generates a list of anime-season references for a season-picker. Returns
- * `future + 1 + past` entries, newest first. e.g. `{ past: 6, future: 1 }` →
- * 8 entries with the future season at the top.
- */
-export function getAnimeSeasonRefs(
-  opts: { past: number; future: number },
-  date: Date = new Date(),
-): AnimeSeasonRef[] {
-  const cur = getCurrentAnimeSeasonRef(date);
-  const curIdx = SEASON_CODES.indexOf(cur.season);
-  const refs: AnimeSeasonRef[] = [];
-  for (let i = opts.future; i >= -opts.past; i--) {
-    let idx = curIdx + i;
-    let year = cur.year;
-    while (idx < 0) {
-      idx += 4;
-      year--;
-    }
-    while (idx > 3) {
-      idx -= 4;
-      year++;
-    }
-    refs.push({
-      season: SEASON_CODES[idx],
-      year,
-      name: `${SEASON_DISPLAY[idx]} ${year}`,
-    });
-  }
-  return refs;
-}
