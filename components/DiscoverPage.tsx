@@ -42,6 +42,14 @@ const SEASON_LABEL: Record<AnimeSeason, string> = {
   FALL: 'Fall',
 };
 
+/** Calendar-rotation next: WINTER → SPRING → SUMMER → FALL → WINTER. */
+const NEXT_SEASON: Record<AnimeSeason, AnimeSeason> = {
+  WINTER: 'SPRING',
+  SPRING: 'SUMMER',
+  SUMMER: 'FALL',
+  FALL: 'WINTER',
+};
+
 /** Derives "Winter 2026" / "Spring 2026" / ... from an anime's startDate.
  *  Used when the user picked the blank "All seasons" option so each anime
  *  lands in its actual tracker-season slot rather than a generic "2026" bin. */
@@ -72,6 +80,7 @@ export function DiscoverPage({
   const [selectedYear, setSelectedYear] = useState<number>(defaultRef.year);
   const [search, setSearch] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [selectedFormats, setSelectedFormats] = useState<string[]>([]);
   const [allTags, setAllTags] = useState<AnilistTag[] | null>(null);
   const [items, setItems] = useState<DiscoverItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -171,13 +180,115 @@ export function DiscoverPage({
     selectedSeason === defaultRef.season && selectedYear === defaultRef.year;
 
   const q = search.trim().toLowerCase();
-  const visibleItems = q
+  const formatFilterActive = selectedFormats.length > 0;
+  const visibleItems = items.filter((i) => {
+    if (formatFilterActive && (!i.format || !selectedFormats.includes(i.format))) {
+      return false;
+    }
+    if (q) {
+      const titleHit = i.title.toLowerCase().includes(q);
+      const engHit = i.titleEnglish?.toLowerCase().includes(q) ?? false;
+      if (!titleHit && !engHit) return false;
+    }
+    return true;
+  });
+
+  // Format counts off the unfiltered (but search-aware) item list so each
+  // pill shows how many would surface if its format were the only one
+  // selected. Skips items with no format reported.
+  const searchScoped = q
     ? items.filter(
         (i) =>
           i.title.toLowerCase().includes(q) ||
           (i.titleEnglish?.toLowerCase().includes(q) ?? false),
       )
     : items;
+  const formatCounts = new Map<string, number>();
+  for (const i of searchScoped) {
+    if (!i.format) continue;
+    formatCounts.set(i.format, (formatCounts.get(i.format) ?? 0) + 1);
+  }
+  // Display order: TV + ONA come first (and share a card-grid block — no
+  // separator between them since they're both "streamed weekly anime"),
+  // then movies, specials, OVAs, TV shorts. Anything else AniList returns
+  // (e.g. MUSIC) gets pushed to the end, sorted by descending count.
+  const FORMAT_ORDER = ['TV', 'ONA', 'MOVIE', 'SPECIAL', 'OVA', 'TV_SHORT'];
+  const FORMAT_LABELS: Record<string, string> = {
+    TV: 'TV',
+    TV_SHORT: 'TV Short',
+    MOVIE: 'Movie',
+    SPECIAL: 'Special',
+    OVA: 'OVA',
+    ONA: 'ONA',
+    MUSIC: 'Music',
+  };
+  // "Block" assignment for the card grid — formats in the same block render
+  // back-to-back without a horizontal separator. Currently TV + ONA share
+  // a block; everything else is its own block.
+  const FORMAT_BLOCK: Record<string, number> = {
+    TV: 0,
+    ONA: 0,
+    MOVIE: 1,
+    SPECIAL: 2,
+    OVA: 2,
+    TV_SHORT: 3,
+  };
+  // Section heading label shown on the separator line for each block (except
+  // the first, which has no separator). Plural by convention since each
+  // block holds many shows. The TV/ONA block has no heading.
+  const FORMAT_HEADING: Record<string, string> = {
+    MOVIE: 'Movies',
+    TV_SHORT: 'TV Shorts',
+    OVA: 'OVAs',
+    SPECIAL: 'Specials',
+    MUSIC: 'Music',
+  };
+  const formatList: string[] = [
+    ...FORMAT_ORDER.filter((f) => formatCounts.has(f)),
+    ...Array.from(formatCounts.keys())
+      .filter((f) => !FORMAT_ORDER.includes(f))
+      .sort((a, b) => (formatCounts.get(b) ?? 0) - (formatCounts.get(a) ?? 0)),
+  ];
+  const toggleFormat = (f: string) => {
+    setSelectedFormats((cur) =>
+      cur.includes(f) ? cur.filter((x) => x !== f) : [...cur, f],
+    );
+  };
+
+  // Card-grid ordering: sort visibleItems by FORMAT_BLOCK (unknown formats
+  // land at the end). TV + ONA share block 0 so they interleave naturally
+  // in AniList's popularity-desc order — TV doesn't all come before ONA.
+  // Stable sort preserves that ordering within each block.
+  const orderedItems = [...visibleItems].sort((a, b) => {
+    const ra = FORMAT_BLOCK[a.format ?? ''] ?? Number.MAX_SAFE_INTEGER;
+    const rb = FORMAT_BLOCK[b.format ?? ''] ?? Number.MAX_SAFE_INTEGER;
+    return ra - rb;
+  });
+
+  // Collect which formats actually appear in each block. Lets the section
+  // heading read "Specials & OVAs" only when both are present in the
+  // current results — falls back to just "Specials" or just "OVAs" if not.
+  const blockFormats = new Map<number, Set<string>>();
+  for (const item of orderedItems) {
+    const block = FORMAT_BLOCK[item.format ?? ''] ?? 99;
+    if (!blockFormats.has(block)) blockFormats.set(block, new Set());
+    blockFormats.get(block)!.add(item.format ?? '');
+  }
+  function blockHeading(block: number): string {
+    const formats = Array.from(blockFormats.get(block) ?? []);
+    // Stable label ordering: follow FORMAT_ORDER position so "Specials &
+    // OVAs" stays in that order regardless of which one appeared first
+    // in the result set.
+    formats.sort(
+      (a, b) =>
+        (FORMAT_ORDER.indexOf(a) === -1 ? 99 : FORMAT_ORDER.indexOf(a)) -
+        (FORMAT_ORDER.indexOf(b) === -1 ? 99 : FORMAT_ORDER.indexOf(b)),
+    );
+    const labels = formats.map(
+      (f) => FORMAT_HEADING[f] ?? FORMAT_LABELS[f] ?? f ?? 'Other',
+    );
+    return labels.join(' & ');
+  }
 
   // Year dropdown options: current+5 down to 1940.
   // AniList's API has a bug where seasonYear values 1917-1929 silently
@@ -210,10 +321,20 @@ export function DiscoverPage({
               className="px-3 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 focus:border-indigo-500 outline-none text-sm"
             >
               <option value="">— All year —</option>
-              <option value="WINTER">Winter</option>
-              <option value="SPRING">Spring</option>
-              <option value="SUMMER">Summer</option>
-              <option value="FALL">Fall</option>
+              {(['WINTER', 'SPRING', 'SUMMER', 'FALL'] as const).map((s) => {
+                const tag =
+                  s === defaultRef.season
+                    ? ' · Now'
+                    : s === NEXT_SEASON[defaultRef.season]
+                      ? ' · Next'
+                      : '';
+                return (
+                  <option key={s} value={s}>
+                    {SEASON_LABEL[s]}
+                    {tag}
+                  </option>
+                );
+              })}
             </select>
             <select
               value={selectedYear}
@@ -222,7 +343,7 @@ export function DiscoverPage({
             >
               {yearOptions.map((y) => (
                 <option key={y} value={y}>
-                  {y === defaultRef.year ? `${y} ★ current` : y}
+                  {y === defaultRef.year ? `${y} ★` : y}
                 </option>
               ))}
             </select>
@@ -270,6 +391,46 @@ export function DiscoverPage({
               />
             </div>
           </div>
+
+          {formatList.length > 0 && (
+            <div className="flex items-start gap-3">
+              <label className="text-xs text-zinc-400 font-semibold uppercase tracking-wide pt-1.5">
+                Format
+              </label>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {formatList.map((f) => {
+                  const active = selectedFormats.includes(f);
+                  const count = formatCounts.get(f) ?? 0;
+                  return (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => toggleFormat(f)}
+                      className={`text-[11px] font-medium px-2.5 py-1 rounded-full border transition-colors ${
+                        active
+                          ? 'bg-indigo-500/20 text-indigo-200 border-indigo-500/60'
+                          : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:border-zinc-700'
+                      }`}
+                    >
+                      {FORMAT_LABELS[f] ?? f}{' '}
+                      <span className={active ? 'opacity-70' : 'text-zinc-500'}>
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
+                {selectedFormats.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFormats([])}
+                    className="text-[11px] text-zinc-500 hover:text-zinc-300 px-2 py-1"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -314,38 +475,72 @@ export function DiscoverPage({
 
       {visibleItems.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-          {visibleItems.map((item) => (
-            <DiscoverCard
-              key={item.anilistId}
-              item={item}
-              alreadyAdded={isAddedTo(
-                item.anilistId,
-                // In all-year mode, "added" check is per-anime against the
-                // tracker season matching that anime's actual airing season.
-                selectedSeason
-                  ? selectedName
-                  : seasonNameFromMonth(
-                      item.startDate?.year ?? selectedYear,
-                      item.startDate?.month ?? undefined,
-                    ),
-              )}
-              onAdd={() =>
-                onAdd(
-                  item,
-                  selectedSeason
-                    ? selectedName
-                    : seasonNameFromMonth(
-                        item.startDate?.year ?? selectedYear,
-                        item.startDate?.month ?? undefined,
-                      ),
-                )
+          {(() => {
+            // Walk orderedItems and inject a full-width separator whenever
+            // the FORMAT_BLOCK changes. TV (block 0) and ONA (block 0) share
+            // a block so there's no line between them.
+            const nodes: React.ReactNode[] = [];
+            let prevBlock: number | null = null;
+            for (const item of orderedItems) {
+              const fmt = item.format ?? '';
+              const block = FORMAT_BLOCK[fmt] ?? 99;
+              if (prevBlock !== null && block !== prevBlock) {
+                // Labeled separator: section heading on the left, a thin
+                // line stretching to the right edge of the grid. Heading
+                // joins the labels of every format actually present in
+                // this block (e.g. "Specials & OVAs" when both appear).
+                nodes.push(
+                  <div
+                    key={`sep-${item.anilistId}`}
+                    className="col-span-full flex items-center gap-3 my-3"
+                  >
+                    <span className="text-sm font-semibold text-zinc-300 shrink-0">
+                      {blockHeading(block)}
+                    </span>
+                    <div
+                      className="flex-1 border-t border-zinc-800"
+                      aria-hidden
+                    />
+                  </div>,
+                );
               }
-              favorited={isFavorited(item.anilistId)}
-              interested={isInterested(item.anilistId)}
-              onToggleFavorite={() => onToggleFavorite(item)}
-              onToggleInterested={() => onToggleInterested(item)}
-            />
-          ))}
+              prevBlock = block;
+              nodes.push(
+                <DiscoverCard
+                  key={item.anilistId}
+                  item={item}
+                  alreadyAdded={isAddedTo(
+                    item.anilistId,
+                    // In all-year mode, "added" check is per-anime against
+                    // the tracker season matching that anime's actual
+                    // airing season.
+                    selectedSeason
+                      ? selectedName
+                      : seasonNameFromMonth(
+                          item.startDate?.year ?? selectedYear,
+                          item.startDate?.month ?? undefined,
+                        ),
+                  )}
+                  onAdd={() =>
+                    onAdd(
+                      item,
+                      selectedSeason
+                        ? selectedName
+                        : seasonNameFromMonth(
+                            item.startDate?.year ?? selectedYear,
+                            item.startDate?.month ?? undefined,
+                          ),
+                    )
+                  }
+                  favorited={isFavorited(item.anilistId)}
+                  interested={isInterested(item.anilistId)}
+                  onToggleFavorite={() => onToggleFavorite(item)}
+                  onToggleInterested={() => onToggleInterested(item)}
+                />,
+              );
+            }
+            return nodes;
+          })()}
         </div>
       )}
     </div>
