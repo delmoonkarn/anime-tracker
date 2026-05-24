@@ -34,6 +34,9 @@ export interface AnimeEntry {
   nextAiringEpisode?: number;
   /** Unix-seconds timestamp for when `nextAiringEpisode` airs. */
   nextAiringAt?: number;
+  /** AniList MediaFormat (TV, MOVIE, OVA, SPECIAL, ONA, TV_SHORT, MUSIC).
+   *  Drives the schedule grid's "movies go in their own block" grouping. */
+  format?: string;
   addedAt: number;
 }
 

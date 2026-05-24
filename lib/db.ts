@@ -192,6 +192,13 @@ try {
     db.exec('ALTER TABLE anime_entries ADD COLUMN next_airing_at INTEGER');
     console.info('[db] added anime_entries.next_airing_at column');
   }
+  if (!has.has('format')) {
+    // AniList MediaFormat string (TV, MOVIE, OVA, SPECIAL, ONA, TV_SHORT,
+    // MUSIC). Lets the schedule grid bucket movies into their own block
+    // separate from the day-of-week grouping the rest of the cards use.
+    db.exec('ALTER TABLE anime_entries ADD COLUMN format TEXT');
+    console.info('[db] added anime_entries.format column');
+  }
 } catch (err) {
   console.warn('[db] watch-progress migration skipped:', err);
 }
@@ -279,6 +286,7 @@ interface AnimeRow {
   total_episodes: number | null;
   next_airing_episode: number | null;
   next_airing_at: number | null;
+  format: string | null;
 }
 
 function readAppState(): AppState | null {
@@ -304,6 +312,7 @@ function readAppState(): AppState | null {
          ae.platform_url,
          ae.status,
          ae.added_at,
+         ae.format,
          COALESCE(ap.watch_status,        ae.watch_status)        AS watch_status,
          COALESCE(ap.episodes_watched,    ae.episodes_watched)    AS episodes_watched,
          COALESCE(ap.total_episodes,      ae.total_episodes)      AS total_episodes,
@@ -335,6 +344,7 @@ function readAppState(): AppState | null {
       totalEpisodes: r.total_episodes ?? undefined,
       nextAiringEpisode: r.next_airing_episode ?? undefined,
       nextAiringAt: r.next_airing_at ?? undefined,
+      format: r.format ?? undefined,
       addedAt: r.added_at,
     });
     grouped.set(r.season_id, list);
@@ -362,8 +372,8 @@ const writeAppStateTxn = db.transaction((state: AppState) => {
   );
   const insAnime = db.prepare(`
     INSERT INTO anime_entries
-      (id, season_id, anilist_id, title, title_english, image_url, day, time, platform, platform_url, status, added_at, watch_status, episodes_watched, total_episodes, next_airing_episode, next_airing_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, season_id, anilist_id, title, title_english, image_url, day, time, platform, platform_url, status, added_at, watch_status, episodes_watched, total_episodes, next_airing_episode, next_airing_at, format)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   // For each anilist_id > 0, collect the "best" progress across all
   // entries — defends against drift where one card got updated and its
@@ -405,6 +415,7 @@ const writeAppStateTxn = db.transaction((state: AppState) => {
         bound ? null : (a.totalEpisodes ?? null),
         bound ? null : (a.nextAiringEpisode ?? null),
         bound ? null : (a.nextAiringAt ?? null),
+        a.format ?? null,
       );
     }
   }

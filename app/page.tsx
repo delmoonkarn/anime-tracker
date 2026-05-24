@@ -187,8 +187,9 @@ export default function HomePage() {
                     ...a,
                     nextAiringEpisode: nextEp ?? undefined,
                     nextAiringAt: nextAt ?? undefined,
-                    // Backfill totalEpisodes too if it was missing on the entry.
+                    // Backfill totalEpisodes + format too if missing.
                     totalEpisodes: a.totalEpisodes ?? m.episodes ?? undefined,
+                    format: a.format ?? m.format ?? undefined,
                   };
                 }),
               })),
@@ -221,7 +222,8 @@ export default function HomePage() {
           (a.day == null ||
             !a.time ||
             a.totalEpisodes == null ||
-            a.nextAiringAt == null),
+            a.nextAiringAt == null ||
+            a.format == null),
       ),
     );
     if (candidates.length === 0) return;
@@ -268,6 +270,7 @@ export default function HomePage() {
                       a.nextAiringAt ??
                       m.nextAiringEpisode?.airingAt ??
                       undefined,
+                    format: a.format ?? m.format ?? undefined,
                   };
                 }),
               })),
@@ -465,6 +468,8 @@ export default function HomePage() {
         // Airing data for the "ep N aired / X behind" indicator.
         nextAiringEpisode: item.nextAiringEpisode,
         nextAiringAt: item.nextAiringAt,
+        // Format drives the schedule's Movies-vs-rest grouping.
+        format: item.format,
         addedAt: Date.now(),
       };
       return {

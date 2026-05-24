@@ -37,6 +37,8 @@ interface SelectedAnime {
   /** Airing data — drives the "ep N aired / X behind" card indicator. */
   nextAiringEpisode?: number;
   nextAiringAt?: number;
+  /** AniList MediaFormat — schedule groups movies in their own block. */
+  format?: string;
 }
 
 function primaryTitle(m: AnilistMedia): string {
@@ -83,6 +85,7 @@ export function AddAnimeModal({
         episodes: initial.totalEpisodes,
         nextAiringEpisode: initial.nextAiringEpisode,
         nextAiringAt: initial.nextAiringAt,
+        format: initial.format,
       });
       setTitle(initial.title);
       setTitleEnglish(initial.titleEnglish ?? '');
@@ -167,6 +170,7 @@ export function AddAnimeModal({
       // Re-binding refreshes airing data; otherwise keep whatever was cached.
       nextAiringEpisode: selected?.nextAiringEpisode ?? initial?.nextAiringEpisode,
       nextAiringAt: selected?.nextAiringAt ?? initial?.nextAiringAt,
+      format: selected?.format ?? initial?.format,
       addedAt: initial?.addedAt ?? Date.now(),
     };
     onSave(entry);
@@ -245,6 +249,7 @@ export function AddAnimeModal({
                               episodes: r.episodes ?? undefined,
                               nextAiringEpisode: r.nextAiringEpisode?.episode ?? undefined,
                               nextAiringAt: r.nextAiringEpisode?.airingAt ?? undefined,
+                              format: r.format ?? undefined,
                             });
                             setTitle(main);
                             setTitleEnglish(eng);

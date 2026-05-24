@@ -280,7 +280,15 @@ export function ScheduleGrid({
       : statusFilter === 'BEHIND'
         ? searched.filter(isWatchingBehind)
         : searched.filter((a) => a.watchStatus === statusFilter);
-  const sorted = [...filtered].sort(sortFlow);
+  // Split movies into a separate group rendered at the bottom of the grid
+  // under their own "Movies" header. They don't fit the day-of-week
+  // rhythm of TV entries (release date, not weekly broadcast).
+  const isMovie = (e: AnimeEntry) => e.format === 'MOVIE';
+  const sortedShows = [...filtered.filter((e) => !isMovie(e))].sort(sortFlow);
+  const sortedMovies = [...filtered.filter(isMovie)].sort((a, b) =>
+    a.title.localeCompare(b.title),
+  );
+  const sorted = [...sortedShows, ...sortedMovies];
 
   // Pre-compute per-status counts off the unfiltered list so the pills show
   // how much each filter would surface even when one is currently active.
@@ -437,62 +445,100 @@ export function ScheduleGrid({
       )}
 
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-x-4 gap-y-10 pt-7">
-        {sorted.map((entry, i) => {
-          const prev = i > 0 ? sorted[i - 1] : null;
-          const isFirstOfDay = !prev || prev.day !== entry.day;
-          const isXlRowStart = i > 0 && i % XL_COLS === 0;
-          const dayName = entry.day ? DAY_LABELS[entry.day] : 'Unscheduled';
-          const isUnscheduled = entry.day == null;
-          // Today / Aired highlights only fire on the calendar's current
-          // season. Past seasons are done airing; future seasons haven't
-          // started — flagging a weekday as "today" there is misleading.
-          const isToday =
-            isCurrentSeason && !isUnscheduled && entry.day === today;
-          const airMin = isToday ? timeToMinutes(entry.time) : null;
-          const isAired = isToday && airMin != null && nowMinutes >= airMin;
+        {(() => {
+          // Walk sorted entries and inject a full-width "Movies" separator
+          // at the boundary between non-movie and movie entries. Movies
+          // are at the end of `sorted` (see split logic above) so the
+          // boundary appears at most once per render.
+          const nodes: React.ReactNode[] = [];
+          let prevEntry: AnimeEntry | null = null;
+          let movieSepEmitted = false;
+          for (let i = 0; i < sorted.length; i++) {
+            const entry = sorted[i];
+            const inMovies = isMovie(entry);
+            const isXlRowStart = i > 0 && i % XL_COLS === 0;
+            const dayName = entry.day ? DAY_LABELS[entry.day] : 'Unscheduled';
+            const isUnscheduled = entry.day == null;
+            // Today / Aired highlights only fire on the calendar's current
+            // season. Movies opt out — they don't air weekly.
+            const isToday =
+              isCurrentSeason &&
+              !isUnscheduled &&
+              !inMovies &&
+              entry.day === today;
+            const airMin = isToday ? timeToMinutes(entry.time) : null;
+            const isAired = isToday && airMin != null && nowMinutes >= airMin;
+            // Day-label visibility: shown on the first card of each weekday
+            // group, suppressed entirely inside the Movies block (the
+            // "Movies" header replaces it).
+            const isFirstOfDay =
+              !inMovies && (!prevEntry || prevEntry.day !== entry.day);
 
-          return (
-            <div key={entry.id} className="relative">
-              {isFirstOfDay && (
-                <span
-                  className={`absolute -top-7 left-0 text-xs font-semibold whitespace-nowrap ${
-                    isToday
-                      ? 'px-2 py-0.5 rounded-full bg-indigo-500 text-white shadow shadow-indigo-500/30'
-                      : isUnscheduled
-                        ? 'text-zinc-500 italic'
-                        : 'text-indigo-300'
-                  }`}
+            // Emit the Movies separator once, immediately before the
+            // first movie card. Full-grid-width line with the label.
+            if (inMovies && !movieSepEmitted) {
+              nodes.push(
+                <div
+                  key="movies-sep"
+                  className="col-span-full flex items-center gap-3 mt-2"
                 >
-                  {dayName}
-                  {isToday && ' · Today'}
-                </span>
-              )}
-              {!isFirstOfDay && isXlRowStart && (
-                <span
-                  className={`hidden xl:inline absolute -top-7 left-0 text-xs font-semibold whitespace-nowrap ${
-                    isToday ? 'text-indigo-300' : 'text-zinc-500'
-                  }`}
-                >
-                  {dayName}
-                  {isToday && ' · Today'}
-                </span>
-              )}
-              <AnimeCard
-                entry={entry}
-                onEdit={onEdit}
-                onDelete={onDelete}
-                onUpdate={onUpdate}
-                showAiring={isCurrentSeason}
-                onToggleFavorite={onToggleFavorite}
-                onToggleInterested={onToggleInterested}
-                isFavorited={isFavorited ? isFavorited(entry.anilistId) : false}
-                isInterested={isInterested ? isInterested(entry.anilistId) : false}
-                isToday={isToday}
-                isAired={isAired}
-              />
-            </div>
-          );
-        })}
+                  <span className="text-sm font-semibold text-zinc-300 shrink-0">
+                    Movies
+                  </span>
+                  <div
+                    className="flex-1 border-t border-zinc-800"
+                    aria-hidden
+                  />
+                </div>,
+              );
+              movieSepEmitted = true;
+            }
+
+            nodes.push(
+              <div key={entry.id} className="relative">
+                {isFirstOfDay && (
+                  <span
+                    className={`absolute -top-7 left-0 text-xs font-semibold whitespace-nowrap ${
+                      isToday
+                        ? 'px-2 py-0.5 rounded-full bg-indigo-500 text-white shadow shadow-indigo-500/30'
+                        : isUnscheduled
+                          ? 'text-zinc-500 italic'
+                          : 'text-indigo-300'
+                    }`}
+                  >
+                    {dayName}
+                    {isToday && ' · Today'}
+                  </span>
+                )}
+                {!isFirstOfDay && !inMovies && isXlRowStart && (
+                  <span
+                    className={`hidden xl:inline absolute -top-7 left-0 text-xs font-semibold whitespace-nowrap ${
+                      isToday ? 'text-indigo-300' : 'text-zinc-500'
+                    }`}
+                  >
+                    {dayName}
+                    {isToday && ' · Today'}
+                  </span>
+                )}
+                <AnimeCard
+                  entry={entry}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
+                  onUpdate={onUpdate}
+                  showAiring={isCurrentSeason}
+                  onToggleFavorite={onToggleFavorite}
+                  onToggleInterested={onToggleInterested}
+                  isFavorited={isFavorited ? isFavorited(entry.anilistId) : false}
+                  isInterested={isInterested ? isInterested(entry.anilistId) : false}
+                  isToday={isToday}
+                  isAired={isAired}
+                />
+              </div>,
+            );
+            prevEntry = entry;
+          }
+          return nodes;
+        })()}
       </div>
     </div>
   );
