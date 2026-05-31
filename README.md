@@ -6,12 +6,10 @@ Personal seasonal anime tracker with AniList integration. Tracks watch progress,
 
 ## Features
 
-- Seasonal browser backed by AniList GraphQL
-- Watch status, current episode, score, and notes per show
-- Progress shared by AniList ID across split-cour or repeat-airing entries
-- Tag system, search, and filtering
-- Excel and JSON import/export
-- Database backup as a downloadable zip
+- Seasonal schedule with per-show watch progress
+- Discover new anime via AniList
+- Favorites and Interested collections
+- Import/export
 
 ## Requirements
 
